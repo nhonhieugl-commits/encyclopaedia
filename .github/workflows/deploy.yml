@@ -72,12 +72,10 @@ jobs:
           echo "Flavors response: $FLAVORS_RAW"
 
           FLAVOR_ID=$(echo "$FLAVORS_RAW" | jq -r '
-            if type == "array" then
-              (map(select(.name == "1x1-general")) | first // first) | .id
-            elif .listData then
-              (.listData | map(select(.name == "1x1-general")) | first // first) | .id
-            elif .data then
-              (.data | map(select(.name == "1x1-general")) | first // first) | .id
+            def pick(arr): arr | map(select(.supportedResourceTypes[]? == "agent-runtime")) | sort_by(.cpu) | first | .id;
+            if type == "array" then pick(.)
+            elif .listData then pick(.listData)
+            elif .data then pick(.data)
             else empty end' 2>/dev/null | head -1)
           echo "Flavor ID: $FLAVOR_ID"
 
