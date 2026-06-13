@@ -83,7 +83,7 @@ jobs:
           ENV_JSON=$(jq -n \
             --arg api_key "${{ secrets.ANTHROPIC_API_KEY }}" \
             --arg base_url "https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1" \
-            --arg model "deepseek/deepseek-v4-flash" \
+            --arg model "qwen/qwen3-5-27b" \
             --arg max_tokens "4096" \
             --arg jwt_secret "${{ secrets.JWT_SECRET }}" \
             --arg jwt_expires "8h" \
