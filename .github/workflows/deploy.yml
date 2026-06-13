@@ -131,12 +131,17 @@ jobs:
               .data | map(select(.name == "ops-encyclopedia")) | first | .id
             else empty end' 2>/dev/null | head -1)
 
-          if [ -n "$EXISTING_ID" ]; then
+          extract_id() {
+            echo "$1" | jq -r '.id // .data.id // ._id // (.listData[0].id) // "null"' 2>/dev/null | head -1
+          }
+
+          if [ -n "$EXISTING_ID" ] && [ "$EXISTING_ID" != "null" ]; then
             echo "Updating existing runtime $EXISTING_ID..."
-            curl -s -X PATCH "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes/$EXISTING_ID" \
+            UPD_RAW=$(curl -s -X PATCH "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes/$EXISTING_ID" \
               -H "Authorization: Bearer $TOKEN" \
               -H "Content-Type: application/json" \
-              -d "$BODY" | jq '{id:.id, status:.status}'
+              -d "$BODY")
+            echo "Update response: $UPD_RAW"
             RUNTIME_ID="$EXISTING_ID"
           else
             echo "Creating new runtime..."
@@ -144,22 +149,32 @@ jobs:
               -H "Authorization: Bearer $TOKEN" \
               -H "Content-Type: application/json" \
               -d "$BODY")
-            echo "$RESULT" | jq '{id:.id, status:.status}'
-            RUNTIME_ID=$(echo "$RESULT" | jq -r '.id')
+            echo "Create response: $RESULT"
+            RUNTIME_ID=$(extract_id "$RESULT")
           fi
 
+          echo "Extracted RUNTIME_ID: $RUNTIME_ID"
           echo "RUNTIME_ID=$RUNTIME_ID" >> $GITHUB_ENV
 
       - name: Wait for ACTIVE status
         run: |
           TOKEN="${{ steps.iam.outputs.token }}"
+          echo "Runtime ID: $RUNTIME_ID"
+          if [ -z "$RUNTIME_ID" ] || [ "$RUNTIME_ID" = "null" ]; then
+            echo "ERROR: RUNTIME_ID is empty — deploy step may have failed"
+            exit 1
+          fi
           echo "Waiting for runtime to become ACTIVE..."
           for i in $(seq 1 30); do
-            STATUS=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes/$RUNTIME_ID" \
-              -H "Authorization: Bearer $TOKEN" | jq -r '.status')
+            RT_RAW=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes/$RUNTIME_ID" \
+              -H "Authorization: Bearer $TOKEN")
+            STATUS=$(echo "$RT_RAW" | jq -r '.status // .runtimeStatus // .state // "unknown"')
             echo "[$((i*10))s] Status: $STATUS"
+            if [ "$i" -eq 1 ]; then
+              echo "Full response: $RT_RAW"
+            fi
             if [ "$STATUS" = "ACTIVE" ]; then break; fi
-            if [ "$STATUS" = "ERROR" ]; then echo "Deploy FAILED!"; exit 1; fi
+            if [ "$STATUS" = "ERROR" ] || [ "$STATUS" = "FAILED" ]; then echo "Deploy FAILED!"; exit 1; fi
             sleep 10
           done
 
