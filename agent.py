@@ -1349,12 +1349,6 @@ async def upload_document(
             import docx, io
             doc_obj = docx.Document(io.BytesIO(content))
             paragraphs = [p.text for p in doc_obj.paragraphs if p.text.strip()]
-            # Also extract tables
-            for table in doc_obj.tables:
-                for row in table.rows:
-                    row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
-                    if row_text:
-                        paragraphs.append(row_text)
             text_content += "\n\n".join(paragraphs) if paragraphs else "(DOCX không có nội dung)"
         except Exception as e:
             log.warning("DOCX extraction failed: %s", e)
@@ -1364,53 +1358,61 @@ async def upload_document(
             import openpyxl, io
             wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
             sheets = []
-            for sheet_name in wb.sheetnames:
-                ws = wb[sheet_name]
-                rows = []
-                for row in ws.iter_rows(values_only=True):
-                    row_vals = [str(c) if c is not None else "" for c in row]
-                    if any(v.strip() for v in row_vals):
-                        rows.append(" | ".join(row_vals))
-                if rows:
-                    sheets.append(f"=== Sheet: {sheet_name} ===\n" + "\n".join(rows))
-            text_content += "\n\n".join(sheets) if sheets else "(XLSX không có dữ liệu)"
+            for sheet in wb.worksheets:
+                rows_text = []
+                for row in sheet.iter_rows(values_only=True):
+                    vals = [str(c) if c is not None else "" for c in row]
+                    if any(v.strip() for v in vals):
+                        rows_text.append("\t".join(vals))
+                if rows_text:
+                    sheets.append(f"=== Sheet: {sheet.title} ===\n" + "\n".join(rows_text))
+            text_content += "\n\n".join(sheets) if sheets else "(XLSX không có nội dung)"
         except Exception as e:
             log.warning("XLSX extraction failed: %s", e)
             text_content += f"(Không thể trích xuất XLSX: {e})"
-    else:
-        text_content += f"(File {ext.upper()} — {size_mb:.1f}MB. Xem file gốc để biết chi tiết.)"
 
     conn = get_connection()
     cursor = conn.execute(
         "INSERT INTO documents (section, title, content, file_type, filename) VALUES (?, ?, ?, ?, ?)",
-        (section, title, text_content, ext.lstrip(".") or "bin", safe_name)
+        (section, title, text_content, ext.lstrip("."), safe_name)
+    )
+    conn.commit()
+    doc_id = cursor.lastrowid
+    conn.close()
+    return {"id": doc_id, "message": f"Upload thành công: {file.filename}"}
+
+
+@app.patch("/api/docs/{doc_id}")
+async def update_document(doc_id: int, doc: DocumentCreate, user: dict = Depends(require_admin)):
+    conn = get_connection()
+    row = conn.execute("SELECT id, file_type FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Tài liệu không tồn tại")
+    conn.execute(
+        "UPDATE documents SET section=?, title=?, content=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (doc.section, doc.title, doc.content, doc_id)
     )
     conn.commit()
     conn.close()
+    return {"id": doc_id, "message": "Đã cập nhật tài liệu"}
 
-    return {"id": cursor.lastrowid, "filename": safe_name, "size_mb": round(size_mb, 2)}
 
-
-@app.delete("/api/docs/{doc_id}")
+@app.delete("/api/docs/{doc_id}", status_code=204)
 async def delete_document(doc_id: int, user: dict = Depends(require_admin)):
     conn = get_connection()
     row = conn.execute("SELECT filename FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not row:
         conn.close()
-        raise HTTPException(404, "Tài liệu không tồn tại")
-
-    conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-    conn.commit()
-    conn.close()
-
-    # Remove physical file if exists
+        raise HTTPException(status_code=404, detail="Tài liệu không tồn tại")
     if row["filename"]:
         try:
             (UPLOAD_DIR / row["filename"]).unlink(missing_ok=True)
         except Exception:
             pass
-
-    return {"message": "Đã xóa tài liệu"}
+    conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+    conn.commit()
+    conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1427,41 +1429,43 @@ async def get_quiz(
     return result
 
 
+class QuizAttemptRequest(BaseModel):
+    answers: dict
+    section: Optional[str] = None
+
+
 @app.post("/api/quiz/attempt")
 async def submit_quiz_attempt(req: QuizAttemptRequest, user: dict = Depends(get_current_user)):
     if not req.answers:
-        raise HTTPException(400, "Không có câu trả lời nào")
+        raise HTTPException(400, "Không có câu trả lời")
 
+    qids = list(req.answers.keys())
+    placeholders = ",".join("?" * len(qids))
     conn = get_connection()
-    question_ids = list(req.answers.keys())
-    placeholders = ",".join(["?"] * len(question_ids))
     rows = conn.execute(
         f"SELECT id, question, correct_answer, explanation FROM quiz_questions WHERE id IN ({placeholders})",
-        question_ids
+        [int(q) for q in qids]
     ).fetchall()
-    conn.close()
 
     results = []
-    correct = 0
+    score = 0
     for row in rows:
-        qid = str(row["id"])
-        user_ans = req.answers.get(qid, "").upper()
-        is_correct = user_ans == row["correct_answer"]
+        your_ans = req.answers.get(str(row["id"]))
+        correct = row["correct_answer"]
+        is_correct = your_ans == correct
         if is_correct:
-            correct += 1
+            score += 1
         results.append({
-            "id": row["id"],
+            "question_id": row["id"],
             "question": row["question"],
-            "your_answer": user_ans,
-            "correct_answer": row["correct_answer"],
+            "your_answer": your_ans,
+            "correct_answer": correct,
             "is_correct": is_correct,
             "explanation": row["explanation"],
         })
 
     total = len(rows)
-    score = correct
     pct = round(score / total * 100) if total else 0
-
     if pct >= 90:
         grade = "Xuất sắc"
     elif pct >= 70:
@@ -1471,14 +1475,13 @@ async def submit_quiz_attempt(req: QuizAttemptRequest, user: dict = Depends(get_
     else:
         grade = "Cần ôn thêm"
 
-    # Save attempt
-    conn2 = get_connection()
-    conn2.execute(
+    sec_val = int(req.section) if req.section and req.section.isdigit() else None
+    conn.execute(
         "INSERT INTO quiz_attempts (user_id, section, score, total) VALUES (?, ?, ?, ?)",
-        (user.get("id"), req.section, score, total)
+        (user["id"], sec_val, score, total)
     )
-    conn2.commit()
-    conn2.close()
+    conn.commit()
+    conn.close()
 
     return {"score": score, "total": total, "percentage": pct, "grade": grade, "results": results}
 
@@ -1488,10 +1491,23 @@ async def get_quiz_history(user: dict = Depends(get_current_user)):
     conn = get_connection()
     rows = conn.execute(
         "SELECT id, section, score, total, taken_at FROM quiz_attempts WHERE user_id = ? ORDER BY taken_at DESC LIMIT 20",
-        (user.get("id"),)
+        (user["id"],)
     ).fetchall()
     conn.close()
-    return {"attempts": [dict(r) for r in rows]}
+    return {
+        "attempts": [
+            {
+                "id": r["id"],
+                "section": r["section"],
+                "section_name": SECTION_NAMES.get(r["section"], "Tất cả"),
+                "score": r["score"],
+                "total": r["total"],
+                "percentage": round(r["score"] / r["total"] * 100) if r["total"] else 0,
+                "taken_at": r["taken_at"],
+            }
+            for r in rows
+        ]
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1499,12 +1515,12 @@ async def get_quiz_history(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/stats")
-async def get_stats(user: dict = Depends(require_admin)):
+async def get_stats(user: dict = Depends(get_current_user)):
     conn = get_connection()
-    docs_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-    quiz_count = conn.execute("SELECT COUNT(*) FROM quiz_questions").fetchone()[0]
+    docs_count    = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    quiz_count    = conn.execute("SELECT COUNT(*) FROM quiz_questions").fetchone()[0]
     attempt_count = conn.execute("SELECT COUNT(*) FROM quiz_attempts").fetchone()[0]
-    user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    user_count    = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     conn.close()
     return {
         "documents": docs_count,
@@ -1517,50 +1533,51 @@ async def get_stats(user: dict = Depends(require_admin)):
 @app.get("/api/admin/users")
 async def list_users(user: dict = Depends(require_admin)):
     conn = get_connection()
-    rows = conn.execute(
-        "SELECT id, username, role, created_at FROM users ORDER BY created_at DESC"
-    ).fetchall()
+    rows = conn.execute("SELECT id, username, role, created_at FROM users ORDER BY id").fetchall()
     conn.close()
     return {"users": [dict(r) for r in rows]}
+
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: str = "user"
 
 
 @app.post("/api/admin/users", status_code=201)
 async def create_user(req: UserCreate, user: dict = Depends(require_admin)):
     if req.role not in ("admin", "user"):
         raise HTTPException(400, "Role không hợp lệ")
-    pw_hash = hashlib.sha256(req.password.encode()).hexdigest()
+    conn = get_connection()
     try:
-        conn = get_connection()
-        cursor = conn.execute(
+        conn.execute(
             "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-            (req.username.strip(), pw_hash, req.role)
+            (req.username, _hash_password(req.password), req.role)
         )
         conn.commit()
+    except sqlite3.IntegrityError:
         conn.close()
-        return {"id": cursor.lastrowid, "username": req.username, "role": req.role}
-    except Exception:
-        raise HTTPException(409, "Username đã tồn tại")
+        raise HTTPException(400, f"Username '{req.username}' đã tồn tại")
+    conn.close()
+    return {"message": f"Đã tạo tài khoản '{req.username}'"}
 
 
-@app.delete("/api/admin/users/{user_id}")
+@app.delete("/api/admin/users/{user_id}", status_code=204)
 async def delete_user(user_id: int, user: dict = Depends(require_admin)):
-    if user.get("id") == user_id:
-        raise HTTPException(400, "Không thể xóa tài khoản của chính mình")
+    if user_id == user["id"]:
+        raise HTTPException(400, "Không thể xóa chính mình")
     conn = get_connection()
-    row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(404, "Người dùng không tồn tại")
     conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     conn.commit()
     conn.close()
-    return {"message": "Đã xóa người dùng"}
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("agent:app", host="0.0.0.0", port=PORT, reload=False)
+    port = int(os.getenv("PORT", "8080"))
+    log.info("Starting Ops Encyclopedia Agent on port %d", port)
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
