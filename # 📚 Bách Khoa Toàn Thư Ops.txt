@@ -1,0 +1,235 @@
+# 📚 Bách Khoa Toàn Thư Ops
+
+> Internal Knowledge Base cho đội ngũ Merchant Operations  
+> Node.js + React + SQLite | Deploy: GreenNode AgentBase
+
+---
+
+## 📋 Mục lục
+
+- [Yêu cầu hệ thống](#yêu-cầu-hệ-thống)
+- [Chạy local (Development)](#chạy-local-development)
+- [Deploy lên GreenNode AgentBase](#deploy-lên-greennode-agentbase)
+- [Cấu hình biến môi trường](#cấu-hình-biến-môi-trường)
+- [Tài khoản mặc định](#tài-khoản-mặc-định)
+- [Hướng dẫn sử dụng](#hướng-dẫn-sử-dụng)
+
+---
+
+## Yêu cầu hệ thống
+
+| Công cụ | Phiên bản tối thiểu |
+|---------|-------------------|
+| Node.js | >= 20.x |
+| npm | >= 9.x |
+| Docker | >= 24.x (để deploy) |
+
+---
+
+## Chạy local (Development)
+
+### 1. Clone repo
+
+```bash
+git clone <your-repo-url>
+cd ops-encyclopedia
+```
+
+### 2. Setup Backend
+
+```bash
+cd backend
+
+# Cài dependencies
+npm install
+
+# Tạo file .env từ template
+cp .env.example .env
+
+# Chỉnh sửa .env nếu cần (xem phần Cấu hình bên dưới)
+nano .env
+
+# Khởi tạo DB và seed tài khoản mặc định
+node src/db/seed.js
+
+# Chạy backend
+npm run dev
+# → Server chạy tại http://localhost:3000
+```
+
+### 3. Setup Frontend
+
+```bash
+# Mở terminal mới
+cd frontend
+
+# Cài dependencies
+npm install
+
+# Chạy frontend dev server
+npm run dev
+# → App chạy tại http://localhost:5173
+```
+
+### 4. Truy cập
+
+Mở trình duyệt: **http://localhost:5173**
+
+---
+
+## Deploy lên GreenNode AgentBase
+
+### Bước 1 — Build Docker image
+
+```bash
+# Từ thư mục gốc dự án
+docker build -t ops-encyclopedia:latest .
+
+# Kiểm tra image đã build thành công
+docker images | grep ops-encyclopedia
+```
+
+### Bước 2 — Test image locally trước khi deploy
+
+```bash
+docker run -d \
+  --name ops-test \
+  -p 3000:3000 \
+  -v $(pwd)/local-data:/app/data \
+  -e JWT_SECRET=test_secret_local \
+  -e NODE_ENV=production \
+  ops-encyclopedia:latest
+
+# Kiểm tra health
+curl http://localhost:3000/health
+# → {"status":"ok","timestamp":"..."}
+
+# Xem logs
+docker logs ops-test
+
+# Dọn dẹp sau khi test
+docker stop ops-test && docker rm ops-test
+```
+
+### Bước 3 — Push image lên Container Registry
+
+```bash
+# Dùng Docker Hub
+docker tag ops-encyclopedia:latest your-dockerhub-username/ops-encyclopedia:latest
+docker push your-dockerhub-username/ops-encyclopedia:latest
+
+# Hoặc dùng GreenNode Registry (nếu có)
+docker tag ops-encyclopedia:latest registry.greennode.ai/your-org/ops-encyclopedia:latest
+docker push registry.greennode.ai/your-org/ops-encyclopedia:latest
+```
+
+### Bước 4 — Tạo Agent trên GreenNode AgentBase
+
+1. Đăng nhập **[greennode.ai](https://greennode.ai)** → vào **AgentBase**
+2. Chọn **"Deploy new agent"** → **Runtime: HTTP**
+3. Điền thông tin:
+   - **Image:** `your-dockerhub-username/ops-encyclopedia:latest`
+   - **Port:** `3000`
+   - **Health check path:** `/health`
+4. Thêm **Persistent Volume:**
+   - Mount path: `/app/data`
+   - Size: `5GB` (đủ cho tài liệu nội bộ)
+5. Set **Environment Variables** (xem bảng bên dưới)
+6. Nhấn **Deploy** → đợi agent live (~2–3 phút)
+7. Copy **URL public** được cấp → chia sẻ cho team
+
+---
+
+## Cấu hình biến môi trường
+
+### File `.env` (local dev)
+
+```env
+# Server
+PORT=3000
+NODE_ENV=development
+
+# Auth — THAY BẰNG GIÁ TRỊ NGẪU NHIÊN DÀI ÍT NHẤT 32 KÝ TỰ
+JWT_SECRET=change_this_to_a_long_random_string_minimum_32_chars
+JWT_EXPIRES_IN=8h
+
+# Database & Storage
+DB_PATH=./data/ops.db
+UPLOAD_DIR=./data/uploads
+MAX_FILE_SIZE_MB=20
+
+# AI — Để trống nếu chưa có, app vẫn chạy bình thường
+ANTHROPIC_API_KEY=
+```
+
+### Biến môi trường trên AgentBase Dashboard
+
+| Biến | Bắt buộc | Mô tả |
+|------|----------|-------|
+| `JWT_SECRET` | ✅ | Chuỗi bí mật dài ≥32 ký tự, random |
+| `NODE_ENV` | ✅ | Đặt là `production` |
+| `MAX_FILE_SIZE_MB` | ❌ | Giới hạn file upload, mặc định `20` |
+| `JWT_EXPIRES_IN` | ❌ | Thời gian token, mặc định `8h` |
+| `ANTHROPIC_API_KEY` | ❌ | Bật AI Chat nếu có |
+
+> ⚠️ **Không cần set** `DB_PATH`, `UPLOAD_DIR`, `PORT` — đã cấu hình sẵn trong Dockerfile.
+
+---
+
+## Tài khoản mặc định
+
+Được tạo tự động khi container khởi động lần đầu:
+
+| Username | Password | Role |
+|----------|----------|------|
+| `admin` | `Admin@123` | Admin — toàn quyền |
+| `user` | `User@123` | User — chỉ đọc & quiz |
+
+> 🔴 **Quan trọng:** Đổi mật khẩu ngay sau lần đăng nhập đầu tiên qua **Admin Panel → Quản lý tài khoản**.
+
+---
+
+## Hướng dẫn sử dụng
+
+### Dành cho Admin
+
+1. **Upload tài liệu:** Đăng nhập → Chọn section → Nhấn "Upload" → Chọn file PDF/DOCX/XLSX
+2. **Tạo câu hỏi Quiz:** Admin Panel → Ngân hàng câu hỏi → Thêm mới → Điền câu hỏi + 4 đáp án + đáp án đúng
+3. **Quản lý tài khoản:** Admin Panel → Tài khoản → Tạo/Xóa/Đổi role
+
+### Dành cho User
+
+1. **Tra cứu:** Chọn section ở sidebar → Xem danh sách tài liệu → Click để đọc
+2. **Tìm kiếm:** Gõ từ khóa vào thanh tìm kiếm → Kết quả hiển thị kèm nguồn
+3. **Làm Quiz:** Chọn "Kiểm Tra Kiến Thức" → Chọn phần → Bắt đầu → Trả lời 10 câu → Xem kết quả
+
+---
+
+## Cấu trúc 5 phần nội dung
+
+| # | Tên | Mô tả |
+|---|-----|-------|
+| 1 | Từ Điển Thuật Ngữ Ops | Định nghĩa TPV, Lead, CR%, Onboard... |
+| 2 | Quy Trình Chuẩn | SOPs, Memo, chính sách nội bộ |
+| 3 | Cẩm Nang Xử Lý Sự Cố | Soundbox, lỗi kết nối, cổng thanh toán |
+| 4 | Danh Mục Thiết Bị & Phần Cứng | Hướng dẫn sử dụng & reset thiết bị |
+| 5 | Kiểm Tra Kiến Thức | Quiz trắc nghiệm A/B/C/D |
+
+---
+
+## Troubleshooting deploy
+
+| Vấn đề | Nguyên nhân | Giải pháp |
+|--------|-------------|-----------|
+| Container crash ngay khi start | `JWT_SECRET` chưa được set | Set env var `JWT_SECRET` trên AgentBase |
+| Tài liệu bị mất sau khi restart | Persistent Volume chưa mount | Kiểm tra volume `/app/data` đã được attach |
+| Upload file thất bại | File quá lớn | Tăng `MAX_FILE_SIZE_MB` hoặc nén file trước |
+| `/health` trả về 502 | Container chưa kịp start | Đợi 15–30s sau khi deploy, check logs |
+
+---
+
+## Liên hệ & hỗ trợ
+
+- **GreenNode AgentBase docs:** [greennode.ai/product/agentbase](https://greennode.ai/product/agentbase)
+- **GreenNode support:** 1900 1549
+- **Tài liệu dự án:** Xem `CLAUDE.md` để biết chi tiết kỹ thuật

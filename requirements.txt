@@ -1,0 +1,30 @@
+# Bách Khoa Toàn Thư Ops — AI Agent Dependencies
+# Python >= 3.11 required
+
+# AI — hỗ trợ cả Anthropic (local) và OpenAI-compatible (GreenNode deploy)
+anthropic>=0.40.0
+openai>=1.0.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+
+# Auth
+PyJWT>=2.10.0
+
+# File text extraction
+pdfplumber>=0.11.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+
+# Async utilities (bundled with uvicorn[standard] but explicit for clarity)
+httptools>=0.6.0
+websockets>=13.0
+
+# Dev / testing (optional — not needed in production Docker image)
+# pytest>=8.0.0
+# httpx>=0.27.0

@@ -1,0 +1,172 @@
+name: Build & Deploy to GreenNode AgentBase
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get IAM token
+        id: iam
+        run: |
+          RESPONSE=$(curl -s -X POST "https://iam.api.vngcloud.vn/accounts-api/v2/auth/token" \
+            -u "${{ secrets.GREENNODE_CLIENT_ID }}:${{ secrets.GREENNODE_CLIENT_SECRET }}" \
+            -d "grant_type=client_credentials" \
+            -H "Content-Type: application/x-www-form-urlencoded")
+          TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Get Container Registry credentials
+        id: cr
+        run: |
+          REPO=$(curl -s "https://agentbase.api.vngcloud.vn/cr/api/v1/repository" \
+            -H "Authorization: Bearer ${{ steps.iam.outputs.token }}")
+          REGISTRY=$(echo "$REPO" | jq -r '.registryUrl')
+          REPO_NAME=$(echo "$REPO" | jq -r '.name')
+
+          CREDS=$(curl -s "https://agentbase.api.vngcloud.vn/cr/api/v1/registry-credential" \
+            -H "Authorization: Bearer ${{ steps.iam.outputs.token }}")
+          CR_USER=$(echo "$CREDS" | jq -r '.username')
+          CR_SECRET=$(echo "$CREDS" | jq -r '.secret')
+
+          echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
+          echo "repo=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "cr_user=$CR_USER" >> $GITHUB_OUTPUT
+          echo "cr_secret=$CR_SECRET" >> $GITHUB_OUTPUT
+
+          echo "Registry: $REGISTRY / $REPO_NAME"
+          echo "CR User: $CR_USER"
+
+      - name: Docker login to GreenNode CR
+        run: |
+          echo "${{ steps.cr.outputs.cr_secret }}" | \
+            docker login ${{ steps.cr.outputs.registry }} \
+            -u ${{ steps.cr.outputs.cr_user }} --password-stdin
+
+      - name: Build Docker image
+        run: |
+          TAG="v$(date +%Y%m%d%H%M%S)"
+          IMAGE="${{ steps.cr.outputs.registry }}/${{ steps.cr.outputs.repo }}/ops-encyclopedia:$TAG"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          docker build -t "$IMAGE" .
+
+      - name: Push Docker image
+        run: docker push "$IMAGE"
+
+      - name: Deploy to AgentBase
+        run: |
+          TOKEN="${{ steps.iam.outputs.token }}"
+          CR_USER="${{ steps.cr.outputs.cr_user }}"
+          CR_SECRET="${{ steps.cr.outputs.cr_secret }}"
+
+          # Get flavor ID
+          FLAVOR_ID=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/flavors" \
+            -H "Authorization: Bearer $TOKEN" | \
+            jq -r '.listData[] | select(.name == "1x1-general") | .id' | head -1)
+
+          if [ -z "$FLAVOR_ID" ]; then
+            FLAVOR_ID=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/flavors" \
+              -H "Authorization: Bearer $TOKEN" | \
+              jq -r '.listData[0].id')
+          fi
+          echo "Flavor ID: $FLAVOR_ID"
+
+          # Build env vars JSON from secrets
+          ENV_JSON=$(jq -n \
+            --arg api_key "${{ secrets.ANTHROPIC_API_KEY }}" \
+            --arg base_url "https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1" \
+            --arg model "Qwen/Qwen3-30B-A3B-FP8" \
+            --arg max_tokens "4096" \
+            --arg jwt_secret "${{ secrets.JWT_SECRET }}" \
+            --arg jwt_expires "8h" \
+            '{
+              ANTHROPIC_API_KEY: $api_key,
+              ANTHROPIC_BASE_URL: $base_url,
+              MODEL: $model,
+              MAX_TOKENS: $max_tokens,
+              JWT_SECRET: $jwt_secret,
+              JWT_EXPIRES_IN: $jwt_expires,
+              NODE_ENV: "production"
+            }')
+
+          BODY=$(jq -n \
+            --arg name "ops-encyclopedia" \
+            --arg desc "Ops Encyclopedia AI Agent" \
+            --arg image "$IMAGE" \
+            --arg flavor "$FLAVOR_ID" \
+            --arg cr_user "$CR_USER" \
+            --arg cr_pass "$CR_SECRET" \
+            --argjson env "$ENV_JSON" \
+            '{
+              name: $name,
+              description: $desc,
+              imageUrl: $image,
+              flavorId: $flavor,
+              command: [],
+              args: [],
+              environmentVariables: $env,
+              autoscaling: {minReplicas:1, maxReplicas:1, cpuUtilization:50, memoryUtilization:50},
+              imageAuth: {enabled:true, username:$cr_user, password:$cr_pass}
+            }')
+
+          # Check if runtime exists
+          EXISTING_ID=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes?page=1&size=100" \
+            -H "Authorization: Bearer $TOKEN" | \
+            jq -r '.listData[] | select(.name == "ops-encyclopedia") | .id' | head -1)
+
+          if [ -n "$EXISTING_ID" ]; then
+            echo "Updating existing runtime $EXISTING_ID..."
+            curl -s -X PATCH "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes/$EXISTING_ID" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$BODY" | jq '{id:.id, status:.status}'
+            RUNTIME_ID="$EXISTING_ID"
+          else
+            echo "Creating new runtime..."
+            RESULT=$(curl -s -X POST "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$BODY")
+            echo "$RESULT" | jq '{id:.id, status:.status}'
+            RUNTIME_ID=$(echo "$RESULT" | jq -r '.id')
+          fi
+
+          echo "RUNTIME_ID=$RUNTIME_ID" >> $GITHUB_ENV
+
+      - name: Wait for ACTIVE status
+        run: |
+          TOKEN="${{ steps.iam.outputs.token }}"
+          echo "Waiting for runtime to become ACTIVE..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes/$RUNTIME_ID" \
+              -H "Authorization: Bearer $TOKEN" | jq -r '.status')
+            echo "[$((i*10))s] Status: $STATUS"
+            if [ "$STATUS" = "ACTIVE" ]; then break; fi
+            if [ "$STATUS" = "ERROR" ]; then echo "Deploy FAILED!"; exit 1; fi
+            sleep 10
+          done
+
+      - name: Get endpoint URL
+        run: |
+          TOKEN="${{ steps.iam.outputs.token }}"
+          ENDPOINT=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes/$RUNTIME_ID/endpoints?page=1&size=10" \
+            -H "Authorization: Bearer $TOKEN" | \
+            jq -r '.listData[] | select(.name == "DEFAULT") | .url')
+
+          echo ""
+          echo "======================================"
+          echo " DEPLOY HOAN TAT!"
+          echo "======================================"
+          echo " Image:    $IMAGE"
+          echo " Endpoint: $ENDPOINT"
+          echo " Health:   $ENDPOINT/health"
+          echo " App:      $ENDPOINT/"
+          echo " Console:  https://aiplatform.console.vngcloud.vn/agent-runtime?tab=runtime"
+          echo "======================================"
