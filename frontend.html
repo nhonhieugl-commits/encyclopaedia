@@ -58,6 +58,18 @@
     /* Fade in for views */
     @keyframes fadein { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:none} }
     .view.active { animation: fadein .18s ease; }
+
+    /* Mobile responsive */
+    @media (max-width: 639px) {
+      .doc-list-wrap  { width: 100% !important; border-right: none !important; }
+      .doc-detail-wrap { display: none !important; }
+      .doc-detail-wrap.mobile-show { display: flex !important; flex-direction: column; width: 100%; }
+      .doc-list-wrap.mobile-hide  { display: none !important; }
+      .doc-back-btn { display: flex !important; }
+      .admin-grid-4 { grid-template-columns: repeat(2,1fr) !important; }
+      .admin-grid-2 { grid-template-columns: repeat(1,1fr) !important; }
+    }
+    .doc-back-btn { display: none; }
   </style>
 </head>
 <body class="bg-gray-50 h-screen flex flex-col overflow-hidden font-sans text-sm text-gray-800">
@@ -108,24 +120,24 @@
     <!-- Tabs -->
     <nav class="flex items-end h-full gap-0.5 flex-1">
       <button onclick="showView('chat')"  data-tab="chat"
-        class="nav-tab border-b-2 px-4 h-full text-sm font-medium flex items-center gap-1.5">
+        class="nav-tab border-b-2 px-3 sm:px-4 h-full text-sm font-medium flex items-center gap-1.5">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
-        Chat AI
+        <span class="hidden sm:inline">Chat AI</span>
       </button>
       <button onclick="showView('docs')"  data-tab="docs"
-        class="nav-tab border-b-2 px-4 h-full text-sm font-medium flex items-center gap-1.5">
+        class="nav-tab border-b-2 px-3 sm:px-4 h-full text-sm font-medium flex items-center gap-1.5">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-        Tài liệu
+        <span class="hidden sm:inline">Tài liệu</span>
       </button>
       <button onclick="showView('quiz')"  data-tab="quiz"
-        class="nav-tab border-b-2 px-4 h-full text-sm font-medium flex items-center gap-1.5">
+        class="nav-tab border-b-2 px-3 sm:px-4 h-full text-sm font-medium flex items-center gap-1.5">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
-        Quiz
+        <span class="hidden sm:inline">Quiz</span>
       </button>
       <button id="adminTab" onclick="showView('admin')" data-tab="admin"
-        class="nav-tab hidden border-b-2 px-4 h-full text-sm font-medium flex items-center gap-1.5">
+        class="nav-tab hidden border-b-2 px-3 sm:px-4 h-full text-sm font-medium flex items-center gap-1.5">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
-        Admin
+        <span class="hidden sm:inline">Admin</span>
       </button>
     </nav>
 
@@ -133,8 +145,8 @@
     <div class="flex items-center gap-2 ml-auto flex-shrink-0">
       <div class="flex items-center gap-2 bg-gray-100 rounded-full pl-1 pr-3 py-1">
         <div id="uAvatar" class="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">U</div>
-        <span id="uName" class="text-xs font-medium text-gray-700">User</span>
-        <span id="uRole" class="text-xs text-gray-400"></span>
+        <span id="uName" class="text-xs font-medium text-gray-700 hidden sm:inline">User</span>
+        <span id="uRole" class="text-xs text-gray-400 hidden sm:inline"></span>
       </div>
       <button onclick="doLogout()" title="Đăng xuất"
         class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors">
@@ -225,14 +237,19 @@
       <!-- Two-panel layout -->
       <div class="flex flex-1 overflow-hidden">
         <!-- List -->
-        <div class="w-72 flex-shrink-0 border-r border-gray-200 bg-white overflow-y-auto">
+        <div class="doc-list-wrap w-72 flex-shrink-0 border-r border-gray-200 bg-white overflow-y-auto">
           <div id="docList" class="divide-y divide-gray-100"></div>
         </div>
         <!-- Detail -->
-        <div id="docDetail" class="flex-1 overflow-y-auto bg-gray-50 p-6">
+        <div id="docDetail" class="doc-detail-wrap flex-1 overflow-y-auto bg-gray-50 p-4 sm:p-6">
+          <!-- Mobile back button -->
+          <button onclick="backToDocList()" class="doc-back-btn items-center gap-1.5 text-xs text-blue-600 font-medium mb-4 hover:underline">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            Danh sách tài liệu
+          </button>
           <div class="h-full flex flex-col items-center justify-center text-gray-400">
             <div class="text-5xl mb-3 opacity-30">📄</div>
-            <p class="text-sm">Chọn tài liệu ở bên trái để đọc</p>
+            <p class="text-sm">Chọn tài liệu để đọc</p>
           </div>
         </div>
       </div>
@@ -263,10 +280,13 @@
               </select>
             </div>
             <div>
-              <label class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Số câu hỏi</label>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Số câu hỏi</label>
+                <span id="qAvail" class="text-xs text-gray-400"></span>
+              </div>
               <div class="grid grid-cols-4 gap-2">
                 <button onclick="setCount(5)"  data-c="5"  class="cnt-btn py-2 rounded-xl text-sm font-semibold border-2 border-gray-200 text-gray-500 hover:border-blue-400 transition-all">5</button>
-                <button onclick="setCount(10)" data-c="10" class="cnt-btn py-2 rounded-xl text-sm font-semibold border-2 border-blue-600 bg-blue-600 text-white">10</button>
+                <button onclick="setCount(10)" data-c="10" class="cnt-btn py-2 rounded-xl text-sm font-semibold border-2 border-gray-200 text-gray-500 hover:border-blue-400 transition-all">10</button>
                 <button onclick="setCount(15)" data-c="15" class="cnt-btn py-2 rounded-xl text-sm font-semibold border-2 border-gray-200 text-gray-500 hover:border-blue-400 transition-all">15</button>
                 <button onclick="setCount(20)" data-c="20" class="cnt-btn py-2 rounded-xl text-sm font-semibold border-2 border-gray-200 text-gray-500 hover:border-blue-400 transition-all">20</button>
               </div>
@@ -330,7 +350,7 @@
       <div class="max-w-5xl mx-auto space-y-5">
 
         <!-- Stats row -->
-        <div class="grid grid-cols-4 gap-3">
+        <div class="grid grid-cols-4 gap-3 admin-grid-4">
           <div class="bg-white rounded-xl border border-gray-200 p-4 text-center">
             <p class="text-2xl font-bold text-blue-600" id="sDocs">—</p>
             <p class="text-xs text-gray-500 mt-0.5">Tài liệu</p>
@@ -350,7 +370,7 @@
         </div>
 
         <!-- Content & Users row -->
-        <div class="grid grid-cols-2 gap-5">
+        <div class="grid grid-cols-2 gap-5 admin-grid-2">
           <!-- Upload file -->
           <div class="bg-white rounded-xl border border-gray-200 p-5">
             <h3 class="font-semibold text-gray-800 mb-4">📤 Upload tài liệu</h3>
@@ -554,6 +574,18 @@ function showView(v) {
   });
   document.getElementById('view'+v.charAt(0).toUpperCase()+v.slice(1)).classList.add('active');
   document.querySelector(`[data-tab="${v}"]`)?.classList.add('active');
+  if (v === 'quiz') { setCount(S.qCount); loadQuizAvailCount(); }
+  if (v === 'docs') { backToDocList(); }
+}
+
+async function loadQuizAvailCount() {
+  try {
+    const r = await af(`${API}/api/stats`);
+    const d = await r.json();
+    const n = d.quiz_questions || 0;
+    const el = document.getElementById('qAvail');
+    if (el) el.textContent = `${n} câu có sẵn`;
+  } catch(_) {}
 }
 
 // ── Chat ───────────────────────────────────────────────────────────
@@ -654,12 +686,30 @@ function renderDocList() {
     </button>`).join('');
 }
 
+function backToDocList() {
+  const list = document.querySelector('.doc-list-wrap');
+  const detail = document.querySelector('.doc-detail-wrap');
+  list?.classList.remove('mobile-hide');
+  detail?.classList.remove('mobile-show');
+}
+
 async function loadDocDetail(id) {
   S.selDoc=id; renderDocList();
+  // Mobile: show detail panel, hide list
+  const list = document.querySelector('.doc-list-wrap');
+  const detail = document.querySelector('.doc-detail-wrap');
+  if (window.innerWidth < 640) {
+    list?.classList.add('mobile-hide');
+    detail?.classList.add('mobile-show');
+  }
   try {
     const r=await af(`${API}/api/docs/${id}`); const doc=await r.json();
     document.getElementById('docDetail').innerHTML=`
       <div class="max-w-3xl mx-auto">
+        <button onclick="backToDocList()" class="doc-back-btn items-center gap-1.5 text-xs text-blue-600 font-medium mb-4 hover:underline">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+          Danh sách tài liệu
+        </button>
         <div class="flex items-center gap-2 mb-5 flex-wrap">
           <span class="text-xs font-semibold px-2.5 py-1 rounded-full ${SEC_COLOR[doc.section]||'bg-gray-100 text-gray-600'}">${doc.section_name}</span>
           <span class="text-xs text-gray-400 uppercase">${doc.file_type||'MD'}</span>

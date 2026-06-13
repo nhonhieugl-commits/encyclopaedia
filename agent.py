@@ -294,6 +294,11 @@ def init_db():
     if count == 0:
         _seed_sample_data(c)
 
+    # Always ensure enough quiz questions exist (seed more if < 20)
+    qcount = c.execute("SELECT COUNT(*) FROM quiz_questions").fetchone()[0]
+    if qcount < 20:
+        _seed_extra_quiz_questions(c)
+
     conn.commit()
     conn.close()
     log.info("Database initialized at %s", get_db_path())
@@ -479,6 +484,105 @@ CR% = (Số merchant đã kích hoạt / Tổng số Lead) × 100%
         )
 
     log.info("Seeded sample data: %d documents, %d quiz questions", len(docs), len(quizzes))
+
+
+def _seed_extra_quiz_questions(c: sqlite3.Cursor):
+    """Seed thêm câu hỏi quiz để đủ 20+ câu cho count selector hoạt động."""
+    extra = [
+        (1, "Lead là gì trong quy trình bán hàng Ops?",
+         "Khách hàng đã ký hợp đồng", "Khách hàng tiềm năng chưa chuyển đổi",
+         "Nhân viên sale mới", "Đơn hàng đã xử lý",
+         "B", "Lead = khách hàng tiềm năng chưa trở thành merchant active"),
+        (1, "Churn rate cao có nghĩa là gì?",
+         "Doanh thu tăng nhanh", "Nhiều merchant mới gia nhập",
+         "Tỷ lệ merchant rời bỏ dịch vụ cao", "Tỷ lệ chuyển đổi tốt",
+         "C", "Churn rate = tỷ lệ merchant ngừng sử dụng dịch vụ"),
+        (1, "MID là viết tắt của gì?",
+         "Merchant Identity Document", "Merchant ID — mã định danh merchant",
+         "Monthly Income Data", "Mobile Integration Device",
+         "B", "MID = Merchant ID, mã định danh duy nhất của mỗi merchant trên hệ thống"),
+        (1, "ARR là chỉ số gì?",
+         "Average Return Rate", "Annual Recurring Revenue — doanh thu định kỳ hàng năm",
+         "Agent Response Rate", "Account Retention Ratio",
+         "B", "ARR = Annual Recurring Revenue, tổng doanh thu định kỳ trong một năm"),
+        (2, "SOP là viết tắt của?",
+         "Sales Operation Plan", "Standard Operating Procedure — quy trình chuẩn",
+         "System Output Protocol", "Service Order Processing",
+         "B", "SOP = Standard Operating Procedure, tài liệu mô tả quy trình chuẩn cần tuân theo"),
+        (2, "KYC trong onboarding merchant nghĩa là gì?",
+         "Keep Your Customer", "Know Your Customer — xác minh danh tính khách hàng",
+         "Key Year Contract", "Keyword Yield Calculator",
+         "B", "KYC = Know Your Customer, quy trình xác minh thông tin và danh tính merchant"),
+        (2, "Khi merchant phản ánh qua nhiều kênh, ưu tiên xử lý theo thứ tự nào?",
+         "Email → Chat → Hotline", "Hotline → Chat trực tiếp → Email",
+         "Xử lý theo thứ tự thời gian nhận", "Tùy tình huống, không có quy định",
+         "B", "Ưu tiên: Hotline (khẩn cấp) → Chat trực tiếp → Email (không khẩn cấp)"),
+        (2, "Memo nội bộ cần được phê duyệt bởi ai trước khi ban hành?",
+         "Nhân viên phụ trách trực tiếp", "Trưởng nhóm hoặc quản lý cấp trên",
+         "Bất kỳ ai trong team", "Chỉ cần gửi email thông báo",
+         "B", "Memo cần được trưởng nhóm/quản lý phê duyệt để đảm bảo tính chính xác và nhất quán"),
+        (3, "Merchant báo giao dịch thành công nhưng tiền chưa về, bước đầu tiên là gì?",
+         "Hoàn tiền ngay cho merchant", "Kiểm tra transaction ID và status trên hệ thống",
+         "Liên hệ ngân hàng ngay", "Yêu cầu merchant chờ 24h",
+         "B", "Luôn kiểm tra transaction ID và trạng thái trên hệ thống trước khi xử lý tiếp"),
+        (3, "Lỗi 'Payment Declined' thường do nguyên nhân gì?",
+         "Lỗi phần cứng Soundbox", "Số dư không đủ, thẻ hết hạn hoặc sai thông tin",
+         "Mạng internet yếu", "Lỗi hệ thống nội bộ",
+         "B", "Payment Declined thường do: số dư không đủ, thẻ hết hạn, hoặc thông tin thẻ không đúng"),
+        (3, "Soundbox kêu tiếng bíp liên tục, nguyên nhân khả năng cao nhất?",
+         "Thiết bị bị hỏng, cần thay mới", "Pin yếu hoặc đang sạc",
+         "Cần cập nhật firmware", "Kết nối WiFi quá chậm",
+         "B", "Tiếng bíp liên tục thường báo pin yếu — kiểm tra và sạc pin trước khi xử lý thêm"),
+        (3, "Khi cổng thanh toán bị gián đoạn, thông báo cho merchant trong bao lâu?",
+         "Sau khi sự cố được giải quyết hoàn toàn", "Ngay lập tức, trong vòng 15 phút",
+         "Trong vòng 1 giờ", "Trong vòng 24 giờ",
+         "B", "Thông báo ngay trong 15 phút để merchant chủ động xử lý giao dịch bằng phương thức khác"),
+        (4, "Cách reset Soundbox SB200 về mặc định nhà máy?",
+         "Nhấn nút nguồn 3 lần liên tiếp", "Giữ nút Reset phía sau trong 10 giây",
+         "Rút pin và cắm lại", "Tắt nguồn và bật lại 5 lần",
+         "B", "Giữ nút Reset phía sau 10 giây cho đến khi đèn LED nhấp nháy đỏ-xanh"),
+        (4, "Đèn LED xanh nhấp nháy trên thiết bị POS nghĩa là gì?",
+         "Thiết bị đang tắt", "Đang xử lý giao dịch hoặc kết nối",
+         "Pin đầy, sẵn sàng dùng", "Cần cập nhật phần mềm",
+         "B", "Xanh nhấp nháy = thiết bị đang hoạt động, xử lý giao dịch hoặc đang kết nối mạng"),
+        (4, "Khi thay thế thiết bị POS, cần thực hiện bước nào đầu tiên?",
+         "Cài đặt phần mềm mới ngay", "Đăng ký serial number mới trên hệ thống",
+         "Xóa dữ liệu thiết bị cũ", "Kiểm tra kết nối mạng",
+         "B", "Luôn đăng ký serial number thiết bị mới trên hệ thống trước khi bàn giao cho merchant"),
+        (1, "NPS là chỉ số đo lường gì?",
+         "Net Payment Speed", "Net Promoter Score — mức độ khách hàng giới thiệu dịch vụ",
+         "New Product Sales", "Number of Payment Sessions",
+         "B", "NPS = Net Promoter Score, đo lường mức độ hài lòng và khả năng giới thiệu dịch vụ"),
+        (2, "Thời gian phản hồi SLA cho ticket khẩn cấp (Priority 1) là bao nhiêu?",
+         "24 giờ", "8 giờ làm việc",
+         "1 giờ", "30 phút",
+         "C", "Ticket P1 (khẩn cấp) phải được phản hồi trong vòng 1 giờ theo SLA chuẩn"),
+        (3, "Merchant không thể đăng nhập vào app, bước đầu tiên hỗ trợ?",
+         "Xóa tài khoản và tạo lại", "Hướng dẫn kiểm tra mạng và thử reset mật khẩu",
+         "Gửi ticket lên cấp 2 ngay", "Cài đặt lại app",
+         "B", "Luôn kiểm tra kết nối mạng và thử reset mật khẩu trước khi leo thang lên cấp 2"),
+        (4, "Pin Soundbox cần sạc khi đèn báo pin còn bao nhiêu %?",
+         "Dưới 50%", "Dưới 30%",
+         "Dưới 20%", "Khi tắt máy tự động",
+         "C", "Nên sạc khi pin còn dưới 20% để tránh thiết bị tắt đột ngột giữa giao dịch"),
+        (1, "Activation Rate đo lường điều gì?",
+         "Tốc độ xử lý giao dịch", "Tỷ lệ merchant đã kích hoạt trên tổng merchant đã ký",
+         "Tỷ lệ app được tải về", "Số lượng tài khoản mới trong tháng",
+         "B", "Activation Rate = tỷ lệ merchant đã kích hoạt thành công / tổng merchant đã ký hợp đồng"),
+    ]
+    inserted = 0
+    for q in extra:
+        try:
+            c.execute(
+                """INSERT OR IGNORE INTO quiz_questions
+                   (section, question, option_a, option_b, option_c, option_d, correct_answer, explanation)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                q
+            )
+            inserted += c.rowcount
+        except Exception:
+            pass
+    log.info("Seeded %d extra quiz questions", inserted)
 
 
 # ---------------------------------------------------------------------------
