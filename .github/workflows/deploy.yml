@@ -66,16 +66,19 @@ jobs:
           CR_USER="${{ steps.cr.outputs.cr_user }}"
           CR_SECRET="${{ steps.cr.outputs.cr_secret }}"
 
-          # Get flavor ID
-          FLAVOR_ID=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/flavors" \
-            -H "Authorization: Bearer $TOKEN" | \
-            jq -r '.listData[] | select(.name == "1x1-general") | .id' | head -1)
+          # Get flavor ID — handle both array and {listData:[]} response shapes
+          FLAVORS_RAW=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/flavors" \
+            -H "Authorization: Bearer $TOKEN")
+          echo "Flavors response: $FLAVORS_RAW"
 
-          if [ -z "$FLAVOR_ID" ]; then
-            FLAVOR_ID=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/flavors" \
-              -H "Authorization: Bearer $TOKEN" | \
-              jq -r '.listData[0].id')
-          fi
+          FLAVOR_ID=$(echo "$FLAVORS_RAW" | jq -r '
+            if type == "array" then
+              (map(select(.name == "1x1-general")) | first // first) | .id
+            elif .listData then
+              (.listData | map(select(.name == "1x1-general")) | first // first) | .id
+            elif .data then
+              (.data | map(select(.name == "1x1-general")) | first // first) | .id
+            else empty end' 2>/dev/null | head -1)
           echo "Flavor ID: $FLAVOR_ID"
 
           # Build env vars JSON from secrets
@@ -117,9 +120,16 @@ jobs:
             }')
 
           # Check if runtime exists
-          EXISTING_ID=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes?page=1&size=100" \
-            -H "Authorization: Bearer $TOKEN" | \
-            jq -r '.listData[] | select(.name == "ops-encyclopedia") | .id' | head -1)
+          RUNTIMES_RAW=$(curl -s "https://agentbase.api.vngcloud.vn/runtime/agent-runtimes?page=1&size=100" \
+            -H "Authorization: Bearer $TOKEN")
+          EXISTING_ID=$(echo "$RUNTIMES_RAW" | jq -r '
+            if type == "array" then
+              map(select(.name == "ops-encyclopedia")) | first | .id
+            elif .listData then
+              .listData | map(select(.name == "ops-encyclopedia")) | first | .id
+            elif .data then
+              .data | map(select(.name == "ops-encyclopedia")) | first | .id
+            else empty end' 2>/dev/null | head -1)
 
           if [ -n "$EXISTING_ID" ]; then
             echo "Updating existing runtime $EXISTING_ID..."
