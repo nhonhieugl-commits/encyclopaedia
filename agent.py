@@ -628,6 +628,11 @@ def verify_token(token: str) -> dict:
             algorithms=["HS256"],
             options={"verify_aud": False},
         )
+        if "sub" in payload:
+            try:
+                payload["id"] = int(payload["sub"])
+            except ValueError:
+                pass
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token đã hết hạn, vui lòng đăng nhập lại")
